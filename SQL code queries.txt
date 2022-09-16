@@ -1,0 +1,735 @@
+	  -- =========================================================================
+
+--                 KAPOIA ERWTHMATA MESW QUERRY TOOL
+
+-- =========================================================================
+
+
+--EROTIMA 2.1
+-- =========================================================================
+
+Create Or Replace function action_customer_creditCard(_personId integer, _action character varying, _documentclient character varying, _fname character varying, _lname character varying, _sex character, _dateofbirth date, _address character varying, _city character varying, _country character varying, _cardtype character varying, _number character varying, _holder character varying, _expiration date)  
+returns boolean language plpgsql as $$  
+Declare  
+	clientId integer;  
+	personId integer;
+	lastPersonId integer;
+Begin  
+	if(_action = 'insert') then
+		select person."idPerson" into lastPersonId from person order by person."idPerson" desc limit 1;
+		insert into person values(lastPersonId + 1, _fname, _lname, _sex, _dateofbirth, _address, _city, _country) RETURNING person."idPerson" into personId;
+	   insert into client values(personId, _documentclient) RETURNING client."idClient" into clientId;
+	   insert into creditcard values(_cardtype, _number, _expiration, _holder, _clientId);
+	   return true;
+	end if;
+	
+	if(_action = 'update') then
+		UPDATE person SET person."fname" = _fname, person."lname" = _lname, person."sex" = _sex, person."dateofbirth" = _dateofbirth, person."address" = _address, person."city" = _city, person."country" = _country where person."idPerson" = _personId;
+		UPDATE client SET client."documentclient" = _documentclient where client."idPerson" = _personId;
+		select client."idClient" into clientId from client where client."idPerson" = _personId and client."documentclient" = _documentclient order by client."idClient" desc limit 1;
+		UPDATE creditcard SET creditcard."cardtype" = _cardtype, creditcard."number" = _number, creditcard."expiration" = _expiration, creditcard."holder" = _holder where client."idClient" = clientId;
+		return true;
+	end if;
+
+	if(_action = 'delete') then
+		delete from person WHERE person."idPerson" = any(array(SELECT person."idPerson" FROM person where person."fname" = _fname and person."lname" = _lname and person."sex" = _sex and person."dateofbirth" = _dateofbirth and person."address" = _address and person."city" = _city and person."country" = _country)); 
+		--delete all pu ikanopoioun tis sinthikes
+		delete from client WHERE client."idClient" = any(array(SELECT client."idClient" FROM client where client."documentclient" = _documentclient));
+		--diegrapse osus client ikanopiun afti ti sinthiki
+		delete from creditcard WHERE creditcard."idClient" = any(array(SELECT creditcard."idClient" FROM creditcard where creditcard."cardtype" = _cardtype and creditcard."number" = _number and creditcard."expiration" = _expiration and creditcard."holder" = _holder));
+		--vres ta id apo ola ta credit cards pu ikanopiun aftes tis sinthikes kai meta kane delete ola ta credit cards pu to id tus itan afta
+		return true;
+	end if;
+	
+	return false;
+End;
+$$;
+
+--EROTIMA 2.2
+-- =========================================================================
+
+Create Or Replace function insert_hotelbookings(_idHotel integer)  
+returns boolean language plpgsql as $$  
+Declare
+	lastHotelbookingId integer;
+	randomClientId integer;
+	clientIdCount integer;
+	currentRoomId integer;
+	numberOfRooms integer;
+	checkin timestamp without time zone;
+	checkout timestamp without time zone;
+	hotelBookingCounter integer = 0;
+	roomBookingCounter integer;
+Begin  
+		select hotelbooking."idhotelbooking" into lastHotelbookingId
+		from hotelbooking order by hotelbooking."idhotelbooking" desc limit 1;	
+		
+		select Count(client."idClient") into clientIdCount from client;
+		--ipologise posoi client exun kanei kratiseis
+		
+		loop 
+		exit when hotelBookingCounter = 30;
+
+		hotelBookingCounter = hotelBookingCounter + 1; 
+
+		numberOfRooms = floor(random() * 4 + 1);
+		--ipologise posa domatia tha exei to kathe batch kratisewn
+		
+		select client."idClient" into randomClientId from client order by client."idClient" desc limit 1 offset floor(random() * 4 * clientIdCount);
+		--offset skiparei tis protes egrafes , skiparume ena tixaio pososto apo clients gia na mi parw ton idio kathe fora me megalo arithmo skip gia na pianw kai tous 10.000 clients
+		
+		lastHotelbookingId = lastHotelbookingId + 1;
+		
+		insert into hotelbooking values(lastHotelbookingId, CURRENT_DATE + interval '20 day', CURRENT_DATE + interval '10 day', floor(random() * 500 + 100), randomClientId, false, null, 'confirmed');
+		--insert oti o client ekane kratisi sto hotel apo katw kanume kratisi gia kathe ksenodoxeio ews 5 domatia
+		
+		roomBookingCounter = 0;
+			loop 
+			exit when roomBookingCounter = numberOfRooms;
+
+			roomBookingCounter = roomBookingCounter + 1; 
+			
+			checkin = CURRENT_DATE + random() * (interval '6 month');
+			--provlepume oti ola ta bookings tha ginun se 6 mines apo tora
+			
+			checkout = checkin + random() * (interval '20 day');
+			--check in + to poly 20 meres 
+			
+			select room."idRoom" into currentRoomId from room inner join roombooking on roombooking."roomID" = room."idRoom" 
+			where room."idHotel" = _idHotel and roombooking."checkin" > checkin and roombooking."checkout" < checkout limit 1; 
+			--thelw 1 toulaxiston room to opoio na einai diathesimo se afto to time window
+			
+			if(currentRoomId is not null) then 
+				--an den einai null kane kratisi , an einai null simainei oti den exume diathesima rooms
+				insert into roombooking values(lastHotelbookingId, currentRoomId, randomClientId, checkin, checkout, random() * 149 + 1);
+				--vale ena kostos sto domatio apo 1-150$
+			end if;
+			
+			end loop;
+		end loop;
+		
+		return true;
+End;
+$$;
+
+--EROTIMA 3.1
+-- =========================================================================
+
+Create Or Replace function city_code_discount()  
+RETURNS TABLE (
+        city character varying,
+        country character varying) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY select hotel."city", hotel."country" from hotel where hotel."idHotel" in (select "idHotel" from "roomrate" where discount > 30);
+End;
+$$;
+
+--EROTIMA 3.2 
+-- =========================================================================
+
+Create Or Replace function hotel_stars_prefix(_stars character varying, _prefix character varying)  
+RETURNS TABLE (
+        stars character varying,
+        name character varying) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY select hotel."stars", hotel."name" from hotel where "idHotel" in (
+	select "idHotel" as table1 from "hotelfacilities" where ("nameFacility" = 'Breakfast')
+	intersect
+	select "idHotel" from "roomrate" where ("roomtype" = 'Studio' and (rate < 80 or rate-discount*rate/100 <80))
+	intersect
+	select "idHotel" as table2 from "hotelfacilities"  where ("nameFacility" = 'Restaurant')
+	intersect
+	select "idHotel" from "roomrate" where ("roomtype" = 'Studio' and (rate < 80 or rate-discount*rate/100 <80))
+	order by table1 asc ) and hotel."stars" = _stars AND hotel."name" ILIKE _prefix || '%'
+	order by stars asc;
+End;
+$$;
+
+--EROTIMA 3.3
+-- =========================================================================
+
+Create Or Replace function max_discount_hotel_room()  
+RETURNS TABLE (
+        name character varying,
+        roomtype character varying,
+		discount real) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY select ht.name, rt."roomtype", table1.disc as discount from  (
+	select h."idHotel" as id, max(rr.discount) as disc from "hotel" as h , "roomrate" as rr 
+	where  h."idHotel" = rr."idHotel" 
+	group by ( h."idHotel")) as table1, "roomrate" as rt, "hotel" as ht where rt.discount = table1.disc and rt."idHotel" = table1."id" and rt."idHotel" = ht."idHotel";
+End;
+$$;
+
+--EROTIMA 3.4
+-- =========================================================================
+
+Create Or Replace function hotel_booking_info()  
+RETURNS TABLE (
+        idhotelbooking integer,
+        fname character varying,
+		lname character varying,
+		reservationdate date,
+		bookedBy text) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY select hotelbooking."idhotelbooking", person."fname", person."lname", hotelbooking."reservationdate", 
+					CASE
+						WHEN Exists (select employee."idEmployee" from employee where employee."idEmployee" = client."idClient") THEN 'employee'
+						--pigene stus employee kai vres poioi exun idio Idemployee pu nai iso me idClient. an ine idio tote ine employee alliws an de vrei kati simainei oti einai client
+						ELSE 'client'
+					  END 
+					AS bookedBy --onomazume to pinaka pu tha exei mesa client client cliend employee empoloyee client klp klp
+					from hotelbooking
+					inner join client on hotelbooking."bookedbyclientID" = client."idClient"
+					inner join person on person."idPerson" = client."idClient";
+					
+End;
+$$;
+
+--EROTIMA 3.5
+-- =========================================================================
+
+Create Or Replace function no_participants_activities()  
+RETURNS TABLE (
+		startingTime time with time zone,
+		endingTime time with time zone,
+		activity_type activity_type,
+        idEmployee integer,
+		idHotel integer,
+		weekday numeric,
+		id integer) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY select * from activity where (select count(participates."idPerson") from participates where participates."idActivity" = activity."Id") = 0;
+	--select count vgazei to num of participants. apo aftus pare osa activitis exun 0 participants
+End;
+$$;
+
+
+--EROTIMA 3.6
+-- =========================================================================
+
+Create Or Replace function sub_facilities(_facilityName character varying)  
+RETURNS TABLE (
+		facilityName character varying) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY with recursive rootFacility as 
+			(
+			  SELECT facility."nameFacility"
+			  FROM facility
+			  WHERE facility."subtypeOf" is null and facility."nameFacility" = _facilityName
+			  UNION ALL
+			  SELECT facility."nameFacility"
+			  FROM rootFacility root
+			  INNER JOIN facility ON facility."subtypeOf" = root."nameFacility"
+			)
+
+			select *
+			from rootFacility
+			offset 1;
+End;
+$$;
+
+--EROTIMA 3.7
+-- =========================================================================
+
+Create Or Replace function same_facilities_room_hotel(_facilityName character varying)  
+RETURNS TABLE (
+		facilityName character varying) 
+language plpgsql AS $$
+Begin  
+	
+	RETURN QUERY with recursive rootFacility as 
+				(
+				  SELECT facility."nameFacility"
+				  FROM facility
+				  WHERE facility."subtypeOf" is null and facility."nameFacility" = _facilityName
+				  UNION ALL
+				  SELECT facility."nameFacility"
+				  FROM rootFacility root
+				  INNER JOIN facility ON facility."subtypeOf" = root."nameFacility"
+				)--copy paste to chain apo panw
+				
+				select hotel."name"
+				from hotel
+				inner join hotelfacilities on hotelfacilities."idHotel" = hotel."idHotel"
+				inner join room on room."idHotel" = hotel."idHotel"
+				inner join roomfacilities on roomfacilities."idRoom" = room."idRoom"
+				where roomfacilities."nameFacility" in (select * from rootFacility) and hotelfacilities."nameFacility" in (select * from rootFacility)
+				group by hotel."name";
+				
+End;
+$$;
+
+--EROTIMA 3.8
+-- =========================================================================
+
+Create Or Replace function hotel_available_all_roomtypes()  
+RETURNS TABLE (
+		hotelName character varying) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY SELECT hotel."name"		  
+				FROM room 
+				INNER JOIN hotel on hotel."idHotel" = room."idHotel"
+				where room."vacant" = 0
+				GROUP by hotel."name" 
+				having count(room."idRoom") > 0;
+End;
+$$;
+--thelw mono ta ksenodoxeia pu exun tulaxiston ena adeio apo kathe room type tous 
+--kanw join ta ksenodoxeia me ta domatia tus
+--kratame mono ta domatia pu ine kena
+--grouparoume oles tis egrafes pu aforun to ksenodoxeio me vasi to onoma tulaxiston
+--me to pu tha kalesw tin group by , ta domatia tu kathe ksenodoxiu tha taksinomithun se room types
+--se kathe katigoria metraw posa roomid ine se kathe katigoria. an se kathe katigoria exi tulaxiston 1 tote to ksenodoxeio einai valid
+
+--EROTIMA 4.1
+-- =========================================================================
+
+Create Or Replace function client_activities_count()  
+RETURNS TABLE (
+		numberOfActivities bigint,
+		fname character varying,
+		lname character varying,
+		hotelName character varying) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY SELECT count(participates."Id"), person."fname", person."lname", hotel."name"			  
+				FROM participates
+				INNER JOIN person ON participates."idPerson" = person."idPerson"
+				INNER JOIN client ON client."idClient" = person."idPerson"
+				INNER JOIN roombooking on roombooking."bookedforpersonID" = client."idClient"
+				INNER JOIN room on room."idRoom" = roombooking."roomID"
+				INNER JOIN hotel on room."idHotel" = hotel."idHotel"
+				GROUP by hotel."name", person."fname", person."lname";
+End;
+$$;
+
+--EROTIMA 4.2
+-- =========================================================================
+
+Create Or Replace function average_years_per_roomtype(_roomtype character varying)  
+RETURNS TABLE (
+		numberOfActivities double precision) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY SELECT avg(extract(year from NOW()) - extract(year from person."dateofbirth")) as averageYears		  
+				FROM person
+				INNER JOIN client ON client."idClient" = person."idPerson"
+				INNER JOIN roombooking on roombooking."bookedforpersonID" = client."idClient"
+				INNER JOIN room on room."idRoom" = roombooking."roomID"
+				where room."roomtype" = _roomtype;
+End;
+$$;
+
+--EROTIMA 4.3
+-- =========================================================================
+
+Create Or Replace function min_price_roomtype(_country character varying)  
+RETURNS TABLE (
+		finalPrice double precision,
+		roomtype character varying,
+		city character varying) 
+language plpgsql AS $$
+Declare  
+	totalRooms double precision;  
+Begin  
+	RETURN QUERY select min(roomrate."rate" * (100 - roomrate."discount") / 100) as finalPrice, roomrate."roomtype", hotel."city"
+	from roomrate 
+	INNER JOIN hotel on roomrate."idHotel" = hotel."idHotel"
+	where hotel."country" = _country
+	group by roomrate."roomtype", hotel."city";
+End;
+$$;
+
+--EROTIMA 4.4
+-- =========================================================================
+
+Create Or Replace function hotel_greater_income_than_city()  
+RETURNS TABLE (
+		averageIncome double precision,
+		hotelName character varying) 
+language plpgsql AS $$
+Begin  
+	RETURN QUERY SELECT avg(transaction."amount") as averageIncome, hotel."name"		  
+				FROM hotelbooking
+				INNER JOIN transaction ON transaction."idhotelbooking" = hotelbooking."idhotelbooking"
+				INNER JOIN roombooking on roombooking."hotelbookingID" = hotelbooking."idhotelbooking"
+				INNER JOIN room on room."idRoom" = roombooking."roomID"
+				INNER JOIN hotel on hotel."idHotel" = room."idHotel"
+				--mexri edw exw pinakakia ana hotel opu exun mesa ta transaction , ta booking ta id hotel ktlp
+				GROUP by hotel."name"
+				--me ti group by kai ti select petaw ta ipolipa pinakakia kai krataw to avg tu kathe hotel name
+				having avg(transaction."amount") > 
+				(SELECT avg(transaction."amount")
+				--edw vriskume to meso oro esodwn twn ksenodoxiwn ana poli 
+						FROM hotelbooking
+						INNER JOIN transaction ON transaction."idhotelbooking" = hotelbooking."idhotelbooking"
+						INNER JOIN roombooking on roombooking."hotelbookingID" = hotelbooking."idhotelbooking"
+						INNER JOIN room on room."idRoom" = roombooking."roomID"
+						INNER JOIN hotel on hotel."idHotel" = room."idHotel");
+						GROUP by hotel."city"
+						
+End;
+$$;
+
+--EROTIMA 4.5
+-- =========================================================================
+
+Create Or Replace function completeness_per_month(_hotelName character varying, _year bigint)  
+RETURNS TABLE (
+		percentage text,
+		month double precision,
+		hotelName character varying) 
+language plpgsql AS $$
+Declare  
+	totalRooms double precision;  
+Begin  
+	select count(room."idRoom")
+	into totalRooms
+	from room 
+	INNER JOIN hotel on room."idHotel" = hotel."idHotel"
+	where hotel."name" = _hotelName;
+	
+	RETURN QUERY select CONCAT(cast((count(distinct(room."idRoom")) / totalRooms) * 100 as character varying), '%') as percentage, extract(month from roombooking."checkin") as month, hotel."name" 
+	from roombooking 
+	INNER JOIN room on room."idRoom" = roombooking."roomID"
+	INNER JOIN hotel on room."idHotel" = hotel."idHotel"
+	where hotel."name" = _hotelName and extract(year from roombooking."checkin") = _year and extract(year from roombooking."checkout") = _year
+	group by month, hotel."name";
+End;
+$$;
+
+--EROTIMA 5.1
+-- =========================================================================
+
+Create Or Replace function after_insert_transaction()  
+RETURNS trigger language plpgsql AS $$
+declare previousKey integer;
+Begin  
+	select transaction."idTransaction" into previousKey from transaction order by transaction."idTransaction" desc limit 1;
+	insert into transaction values('reservation', previousKey + 1, new."totalamount", new."idhotelbooking", CURRENT_DATE);
+	return new;
+End;
+$$;
+
+CREATE TRIGGER transaction
+AFTER insert ON hotelbooking
+FOR EACH ROW
+execute function after_insert_transaction();
+
+-- =========================================================================
+
+Create Or Replace function after_update_transaction()  
+RETURNS trigger language plpgsql AS $$
+declare previousKey integer;
+Begin  
+	select transaction."idTransaction" into previousKey from transaction order by transaction."idTransaction" desc limit 1;
+	insert into transaction values('update', previousKey + 1, new."totalamount", new."idhotelbooking", CURRENT_DATE);
+	return new;
+End;
+$$;
+
+CREATE TRIGGER update_transaction
+AFTER update ON hotelbooking
+FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+execute function after_update_transaction();
+
+-- =========================================================================
+
+Create Or Replace function after_delete_transaction()  
+RETURNS trigger language plpgsql AS $$
+declare previousKey integer;
+Begin  
+	select transaction."idTransaction" into previousKey from transaction order by transaction."idTransaction" desc limit 1;
+	insert into transaction values('cancelation', previousKey + 1, new."totalamount", new."idhotelbooking", CURRENT_DATE);
+	return new;
+End;
+$$;
+
+CREATE TRIGGER delete_transaction
+AFTER delete ON hotelbooking
+FOR EACH ROW
+execute function after_delete_transaction();
+
+--EROTIMA 5.2
+-- =========================================================================
+
+Create Or Replace function cancellationdate()  
+RETURNS trigger language plpgsql AS $$
+declare isManager boolean;
+Begin  
+	
+	select exists(select employee."idEmployee"
+	from employee 
+	inner join manages on manages."idEmployee" = employee."idEmployee"
+	inner join hotelbooking on manages."idhotelbooking" = hotelbooking."idhotelbooking"
+	where employee."role" = 'manager' and hotelbooking."idhotelbooking" = new."idhotelbooking") into isManager;
+	
+	if(isManager) then
+		return new;
+	else
+		RAISE INFO 'Only the manager can change the cancellation date.';
+		return old;
+	end if;
+End;
+$$;
+
+CREATE TRIGGER manager_only_cancellationdate
+before update ON hotelbooking
+FOR EACH ROW
+WHEN (OLD."cancellationdate" IS DISTINCT FROM NEW."cancellationdate")
+execute function cancellationdate();
+
+-- =========================================================================
+
+Create Or Replace function isCancellable()  
+RETURNS trigger language plpgsql AS $$
+Begin  
+	if(new."cancellationdate" > CURRENT_DATE) then
+		RAISE INFO 'Cancellation has passed, so you cannot cancel this booking.';
+		return old;
+	else
+		return new;
+	end if;
+End;
+$$;
+
+CREATE TRIGGER cancel_bookings
+before update ON hotelbooking
+FOR EACH ROW
+WHEN (NEW."status" = 'canceled')
+execute function isCancellable();
+
+-- =========================================================================
+
+Create Or Replace function checkIfRemoveableRoom()  
+RETURNS trigger language plpgsql AS $$
+declare CancellationDate date;
+Begin  
+	SELECT hotelbooking."cancellationdate" into CancellationDate from hotelbooking where hotelbooking."idhotelbooking" = old."hotelbookingID";
+	if(CancellationDate > CURRENT_DATE) then
+		RAISE INFO 'Cancellation has passed, so you cannot remove this room booking.';
+		return old;
+	end if;
+	return new;
+End;
+$$;
+
+CREATE TRIGGER remove_roombookings
+before delete ON roombooking
+FOR EACH ROW
+execute function checkIfRemoveableRoom();
+
+-- =========================================================================
+
+Create Or Replace function checkIfUpdateableCheckout()  
+RETURNS trigger language plpgsql AS $$
+declare CancellationDate date;
+Begin  
+	SELECT hotelbooking."cancellationdate" into CancellationDate from hotelbooking where hotelbooking."idhotelbooking" = old."hotelbookingID";
+	if(CancellationDate > CURRENT_DATE) then
+		RAISE INFO 'Cancellation has passed, so you cannot update this room checkout date.';
+		return old;
+	end if;
+	return new;
+End;
+$$;
+
+CREATE TRIGGER update_roombookings_checkout
+before update ON roombooking
+FOR EACH ROW
+WHEN (NEW."checkout" < old."checkout")
+execute function checkIfUpdateableCheckout();
+
+--EROTIMA 5.3
+-- =========================================================================
+
+Create Or Replace function add_roombooking_rate_to_total_amount()  
+RETURNS trigger language plpgsql AS $$
+Begin  
+	update hotelbooking set hotelbooking."totalamount" = hotelbooking."totalamount" + new."rate" where hotelbooking."idhotelbooking" = new."hotelbookingID";
+	return new;
+End;
+$$;
+
+CREATE TRIGGER add_roombooking_rate
+after insert ON roombooking
+FOR EACH ROW
+execute function add_roombooking_rate_to_total_amount();
+
+-- =========================================================================
+
+Create Or Replace function update_roombooking_rate_to_total_amount()  
+RETURNS trigger language plpgsql AS $$
+declare 
+HasBeenPayed boolean;
+CancellationDate date;
+previousKey integer;
+Begin  
+	select hotelbooking."payed" into HasBeenPayed from hotelbooking where hotelbooking."idhotelbooking" = new."hotelbookingID";
+	
+	select hotelbooking."cancellationdate" into CancellationDate from hotelbooking where hotelbooking."idhotelbooking" = new."hotelbookingID";
+	
+	if(HasBeenPayed) then
+		if(CancellationDate > Current_date) then
+			RAISE INFO 'Cancellation has passed and the room has been payed, so you cannot update this room rate.';
+			return old;
+		else
+			select transaction."idTransaction" into previousKey from transaction order by transaction."idTransaction" desc limit 1;
+			
+			insert into transaction values('update', previousKey + 1, new."rate", new."hotelbookingID", CURRENT_DATE);
+		end if;
+	else
+		update hotelbooking set hotelbooking."totalamount" = hotelbooking."totalamount" + new."rate" - old."rate" where hotelbooking."idhotelbooking" = new."hotelbookingID";
+	end if;
+	
+	return new;
+End;
+$$;
+
+CREATE TRIGGER update_roombooking_rate
+after update ON roombooking
+FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+execute function update_roombooking_rate_to_total_amount();
+
+-- =========================================================================
+
+Create Or Replace function remove_roombooking_rate_from_total_amount()  
+RETURNS trigger language plpgsql AS $$
+declare 
+HasBeenPayed boolean;
+CancellationDate date;
+previousKey integer;
+Begin  
+	select hotelbooking."payed" into HasBeenPayed from hotelbooking where hotelbooking."idhotelbooking" = old."hotelbookingID";
+	
+	select hotelbooking."cancellationdate" into CancellationDate from hotelbooking where hotelbooking."idhotelbooking" = old."hotelbookingID";
+	
+	if(HasBeenPayed) then
+		if(CancellationDate > Current_date) then
+			RAISE INFO 'Cancellation has passed and the room has been payed, so you cannot update this room rate.';
+		else
+			select transaction."idTransaction" into previousKey from transaction order by transaction."idTransaction" desc limit 1;
+			
+			insert into transaction values('cancelation', previousKey + 1, old."rate", old."hotelbookingID", CURRENT_DATE);
+		end if;
+	else
+		update hotelbooking set hotelbooking."totalamount" = hotelbooking."totalamount" - old."rate" where hotelbooking."idhotelbooking" = old."hotelbookingID";
+	end if;
+	
+	return old;
+End;
+$$;
+
+CREATE TRIGGER remove_roombooking_rate
+after delete ON roombooking
+FOR EACH ROW
+execute function remove_roombooking_rate_from_total_amount();
+
+-- =========================================================================
+
+Create Or Replace function update_roombooking_checkout()  
+RETURNS trigger language plpgsql AS $$
+declare 
+NewCheckOutDate date;
+Begin  
+	
+	select roombooking."checkin" into NewCheckOutDate from roombooking where roombooking."roomID" = new."roomID" and roombooking."checkin" < new."checkout" order by roombooking."checkin" limit 1;
+	
+	
+	if(NewCheckOutDate is null) then
+		RAISE INFO 'This room checkout date can be extended until: %', NewCheckOutDate;
+		return new;
+	else
+		RAISE INFO 'This room checkout date can not be extended. This room checkout date is at: %', old."checkout";
+		return old;
+	end if;
+End;
+$$;
+
+CREATE TRIGGER update_roombooking_checkout
+before update ON roombooking
+FOR EACH ROW
+WHEN (OLD."checkout" < NEW."checkout")
+execute function update_roombooking_checkout();
+
+--EROTIMA 6.1
+-- =========================================================================
+
+CREATE VIEW avalableRooms AS
+SELECT room."roomtype", roombooking."checkout"
+FROM hotel 
+inner join room on room."idHotel" = hotel."idHotel"
+inner join roombooking on room."idRoom" = roombooking."roomID"
+where hotel."name" = 'Willow Beach Motel & Cottages' and roombooking."checkin" <= CURRENT_DATE and roombooking."checkout" >= CURRENT_DATE;
+
+
+
+select A."idRoom",A."roomtype",A."checkout" as freesince,B."checkin" as AvailableUntil
+from(
+    SELECT room."idRoom" , room."number" , room."roomtype",roombooking."checkout",row_number() over (order by room."idRoom") as row_num
+    FROM hotel
+inner join room on room."idHotel" = hotel."idHotel"
+inner join roombooking on room."idRoom" = roombooking."roomID"
+where hotel."name" = 'Willow Beach Motel & Cottages')A
+join
+    (SELECT room."idRoom",roombooking."checkin",row_number() over (order by room."idRoom" BETWEEN 2 AND 10000) as row_num
+    FROM hotel
+inner join room on room."idHotel" = hotel."idHotel"
+inner join roombooking on room."idRoom" = roombooking."roomID"
+where hotel."name" = 'Willow Beach Motel & Cottages')B
+on  A.row_num+1=B.row_num
+WHERE A."checkout" <= CURRENT_DATE and B."checkin" >= CURRENT_DATE and A."idRoom" = B."idRoom"
+ORDER BY A."idRoom",B."idRoom"
+
+-- sugkrino kathe fora to teleutaio check out kathe domatiou me to amesos epomeno programmatismeno checkin gia to domatio auto
+-- an h CURRENT_DATE peftei anamesa stis meres pou den uparxei kratisi tote sto domatio mporei na ginei kratisi mexri kai tin mera pou
+-- einai programmatismeno to epomeno check in allou pelati
+
+--EROTIMA 6.2
+-- =========================================================================
+
+CREATE VIEW avalableWeeklyRooms AS
+SELECT room."idRoom", roomrate."rate", roomrate."discount", roombooking."checkin", roombooking."checkout", 
+CASE
+	WHEN client."idClient" is not null THEN client."idClient"
+	ELSE '0'
+END as documentClient
+FROM hotel 
+inner join room on room."idHotel" = hotel."idHotel"
+inner join roombooking on room."idRoom" = roombooking."roomID"
+inner join roomrate on roomrate."idHotel" = hotel."idHotel"
+left join client on client."idClient" = roombooking."bookedforpersonID"
+where hotel."name" = 'Willow Beach Motel & Cottages' 
+and CURRENT_DATE - interval '1 day' + interval '1 day' * extract(dow from CURRENT_DATE) <= roombooking."checkin" 
+and roombooking."checkout" <= CURRENT_DATE + interval '1 day' * extract(dow from CURRENT_DATE) + interval '6 day'
+order by room."idRoom";
+
+!!!Σημείωση για το 6.2!!!
+
+A PostgreSQL view is updatable when it meets the following conditions:
+
+The defining query of the view must have exactly one entry in the FROM clause, which can be a table or another updatable view.
+The defining query must not contain one of the following clauses at the top level: GROUP BY, HAVING, LIMIT, OFFSET, DISTINCT, WITH, UNION, INTERSECT, and EXCEPT.
+The selection list must not contain any window function , any set-returning function, or any aggregate function such as SUM, COUNT, AVG, MIN, and MAX.
+ 
+Άρα το view του 6.2 ενημερώνεται αυτόματα, επειδή πληρεί τις παραπάνω προυποθέσεις. Οπότε δεν χρειάζονται triggers για την ενημέρωση του.
+
+-- Gia na gemisw thn manages
+-- =========================================================================
+
+INSERT INTO manages("idEmployee", "idhotelbooking")
+select emp."idEmployee",hb."idhotelbooking" from "employee" as emp, "hotelbooking" as hb where emp."idEmployee" = hb."bookedbyclientID" and emp.role = 'manager'
+union 
+select emp."idEmployee",hb."idhotelbooking" from "employee" as emp, "hotelbooking" as hb where emp."idEmployee" = hb."bookedbyclientID" and emp.role = 'staff'
+union 
+select emp."idEmployee",hb."idhotelbooking" from "employee" as emp, "hotelbooking" as hb where emp."idEmployee" = hb."bookedbyclientID" and emp.role = 'reception'
